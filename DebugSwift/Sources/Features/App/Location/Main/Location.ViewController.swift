@@ -15,7 +15,6 @@ final class LocationViewController: BaseController {
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.backgroundColor = Theme.shared.backgroundColor
         tableView.separatorColor = .darkGray
-
         return tableView
     }()
 
@@ -33,6 +32,12 @@ final class LocationViewController: BaseController {
     override func viewDidLoad() {
         super.viewDidLoad()
         setupTable()
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        tableView.reloadData()
+        updateResetButton()
     }
 
     func resetLocation() {
@@ -70,6 +75,12 @@ final class LocationViewController: BaseController {
     func setup() {
         title = "location-title".localized()
     }
+    
+    private func updateResetButton() {
+        resetButton?.isEnabled = viewModel.customSelected || 
+                               viewModel.selectedIndex != -1 || 
+                               viewModel.routeSimulation.isSimulating
+    }
 }
 
 extension LocationViewController: UITableViewDataSource, UITableViewDelegate {
@@ -90,21 +101,31 @@ extension LocationViewController: UITableViewDataSource, UITableViewDelegate {
             for: indexPath
         )
         let image = UIImage.named("checkmark.circle")
-        if indexPath.row == 0 {
+        
+        switch indexPath.row {
+        case 0: // Custom Location
             cell.setup(
                 title: "custom".localized(),
                 subtitle: viewModel.customDescription,
                 image: viewModel.customSelected ? image : nil
             )
-            return cell
-        } else {
-            let location = viewModel.locations[indexPath.row - 1]
+            
+        case 1: // Route Simulation
+            cell.setup(
+                title: "Route Simulation",
+                subtitle: viewModel.routeSimulation.isSimulating ? "Active" : nil,
+                image: viewModel.routeSimulation.isSimulating ? image : nil
+            )
+            
+        default: // Preset Locations
+            let location = viewModel.locations[indexPath.row - 2]
             cell.setup(
                 title: location.title,
                 image: indexPath.row == viewModel.selectedIndex ? image : nil
             )
-            return cell
         }
+        
+        return cell
     }
 
     func tableView(_: UITableView, heightForRowAt _: IndexPath) -> CGFloat {
@@ -112,15 +133,24 @@ extension LocationViewController: UITableViewDataSource, UITableViewDelegate {
     }
 
     func tableView(_: UITableView, didSelectRowAt indexPath: IndexPath) {
-        if indexPath.row == .zero {
+        switch indexPath.row {
+        case 0: // Custom Location
             let controller = MapSelectionViewController(
                 selectedLocation: LocationToolkit.shared.simulatedLocation,
                 delegate: self
             )
             navigationController?.pushViewController(controller, animated: true)
-        } else {
+            
+        case 1: // Route Simulation
+            let controller = RouteSimulationViewController(
+                simulation: viewModel.routeSimulation,
+                delegate: self
+            )
+            navigationController?.pushViewController(controller, animated: true)
+            
+        default: // Preset Locations
             viewModel.selectedIndex = indexPath.row
-            let location = viewModel.locations[indexPath.row - 1]
+            let location = viewModel.locations[indexPath.row - 2]
             LocationToolkit.shared.simulatedLocation = CLLocation(
                 latitude: location.latitude,
                 longitude: location.longitude
@@ -136,6 +166,14 @@ extension LocationViewController: LocationSelectionDelegate {
         LocationToolkit.shared.simulatedLocation = location
         resetButton?.isEnabled = true
         viewModel.selectedIndex = .zero
+        tableView.reloadData()
+    }
+}
+
+extension LocationViewController: RouteSimulationDelegate {
+    func didUpdateRouteSimulation(_ simulation: RouteSimulation) {
+        viewModel.routeSimulation = simulation
+        updateResetButton()
         tableView.reloadData()
     }
 }

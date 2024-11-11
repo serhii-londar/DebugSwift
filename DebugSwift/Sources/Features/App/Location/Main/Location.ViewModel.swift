@@ -12,7 +12,7 @@ final class LocationViewModel: NSObject {
     var selectedIndex: Int = LocationToolkit.shared.indexSaved
 
     var numberOfRows: Int {
-        LocationToolkit.shared.presetLocations.count + 1
+        LocationToolkit.shared.presetLocations.count + 2 // +1 for custom, +1 for route simulation
     }
 
     var locations: [PresetLocation] {
@@ -28,10 +28,22 @@ final class LocationViewModel: NSObject {
         guard LocationToolkit.shared.simulatedLocation != nil else { return false }
         return LocationToolkit.shared.indexSaved == -1
     }
+    
+    var routeSimulation: RouteSimulation {
+        get { LocationToolkit.shared.routeSimulation }
+        set { LocationToolkit.shared.routeSimulation = newValue }
+    }
 
     func resetLocation() {
         LocationToolkit.shared.simulatedLocation = nil
         selectedIndex = -1
+        
+        // Stop route simulation if active
+        if routeSimulation.isSimulating {
+            var simulation = routeSimulation
+            simulation.isSimulating = false
+            LocationToolkit.shared.routeSimulation = simulation
+        }
     }
 
     func coordinateString(with location: CLLocation?) -> String {

@@ -9,11 +9,15 @@ import CoreLocation
 import Foundation
 
 final class LocationToolkit {
-
     static let shared = LocationToolkit()
-
+    private var routeSimulationTimer: Timer?
+    
     var simulatedLocation: CLLocation? {
         get {
+            if routeSimulation.isSimulating {
+                return currentRouteLocation
+            }
+            
             let latitude = UserDefaults.standard.double(forKey: Constants.simulatedLatitude)
             let longitude = UserDefaults.standard.double(forKey: Constants.simulatedLongitude)
             guard !latitude.isZero, !longitude.isZero else { return nil }
@@ -43,7 +47,48 @@ final class LocationToolkit {
             CLLocationManagerTracker.triggerUpdateForAllLocations()
         }
     }
-
+    
+    var routeSimulation: RouteSimulation {
+        get {
+            var simulation = RouteSimulation()
+            
+            if let data = UserDefaults.standard.data(forKey: RouteSimulation.Constants.simulatedRouteKey),
+               let locations = try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? [CLLocation] {
+                simulation.locations = locations
+            }
+            
+            if let speedRawValue = UserDefaults.standard.string(forKey: RouteSimulation.Constants.simulatedSpeedKey),
+               let speed = RouteSimulation.Speed(rawValue: speedRawValue) {
+                simulation.speed = speed
+            }
+            
+            simulation.customSpeed = UserDefaults.standard.double(forKey: RouteSimulation.Constants.simulatedCustomSpeedKey)
+            simulation.isSimulating = UserDefaults.standard.bool(forKey: RouteSimulation.Constants.simulatedIsActiveKey)
+            
+            return simulation
+        }
+        set {
+            if let data = try? NSKeyedArchiver.archivedData(withRootObject: newValue.locations, requiringSecureCoding: false) {
+                UserDefaults.standard.set(data, forKey: RouteSimulation.Constants.simulatedRouteKey)
+            }
+            
+            UserDefaults.standard.set(newValue.speed.rawValue, forKey: RouteSimulation.Constants.simulatedSpeedKey)
+            UserDefaults.standard.set(newValue.customSpeed, forKey: RouteSimulation.Constants.simulatedCustomSpeedKey)
+            UserDefaults.standard.set(newValue.isSimulating, forKey: RouteSimulation.Constants.simulatedIsActiveKey)
+            UserDefaults.standard.synchronize()
+            
+            if newValue.isSimulating {
+                startRouteSimulation()
+            } else {
+                stopRouteSimulation()
+            }
+        }
+    }
+    
+    private var currentRouteLocation: CLLocation?
+    private var currentSegment: (start: CLLocation, end: CLLocation)?
+    private var segmentProgress: Double = 0
+    
     var indexSaved: Int {
         guard let simulatedLocation else { return -1 }
         if let index = presetLocations.firstIndex(
@@ -147,6 +192,64 @@ final class LocationToolkit {
 
         return presetLocations
     }()
+    
+    private func startRouteSimulation() {
+        guard routeSimulation.locations.count >= 2 else { return }
+        
+        stopRouteSimulation()
+        
+        currentRouteLocation = routeSimulation.locations[0]
+        setupNextSegment()
+        
+        routeSimulationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateRouteLocation()
+        }
+    }
+    
+    private func stopRouteSimulation() {
+        routeSimulationTimer?.invalidate()
+        routeSimulationTimer = nil
+        currentRouteLocation = nil
+        currentSegment = nil
+        segmentProgress = 0
+    }
+    
+    private func setupNextSegment() {
+        guard routeSimulation.locations.count >= 2 else {
+            stopRouteSimulation()
+            return
+        }
+        
+        let currentIndex = routeSimulation.currentLocationIndex
+        let nextIndex = (currentIndex + 1) % routeSimulation.locations.count
+        
+        currentSegment = (
+            start: routeSimulation.locations[currentIndex],
+            end: routeSimulation.locations[nextIndex]
+        )
+        segmentProgress = 0
+    }
+    
+    private func updateRouteLocation() {
+        guard let segment = currentSegment else { return }
+        
+        let speed = routeSimulation.effectiveSpeed
+        let totalDistance = segment.start.distance(from: segment.end)
+        segmentProgress += speed
+        
+        if segmentProgress >= totalDistance {
+            routeSimulation.currentLocationIndex = (routeSimulation.currentLocationIndex + 1) % routeSimulation.locations.count
+            currentRouteLocation = routeSimulation.locations[routeSimulation.currentLocationIndex]
+            setupNextSegment()
+        } else {
+            let fraction = segmentProgress / totalDistance
+            let newLat = segment.start.coordinate.latitude + (segment.end.coordinate.latitude - segment.start.coordinate.latitude) * fraction
+            let newLon = segment.start.coordinate.longitude + (segment.end.coordinate.longitude - segment.start.coordinate.longitude) * fraction
+            currentRouteLocation = CLLocation(latitude: newLat, longitude: newLon)
+        }
+        
+        CLLocationManagerTracker.triggerUpdateForAllLocations()
+    }
 }
 
 final class PresetLocation {

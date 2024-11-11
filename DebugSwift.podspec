@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   s.author           = { 'Matheus Gois' => 'matheusgoislimasilva@gmail.com' }
   s.source           = { :git => 'https://github.com/DebugSwift/DebugSwift.git', :tag => s.version.to_s }
 
-  s.ios.deployment_target = '12.0'
+  s.ios.deployment_target = '13.0'
   s.swift_version = '5.7'
 
   s.source_files = 'DebugSwift/Sources/**/*'

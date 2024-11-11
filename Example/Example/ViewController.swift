@@ -6,19 +6,48 @@
 //
 
 import UIKit
+import MapKit
+import CoreLocation
 
 class ViewController: UIViewController {
 
     @IBOutlet var text: UILabel!
+    @IBOutlet var mapView: MKMapView!
+    
+    private let locationAnnotation = MKPointAnnotation()
+    private var hasInitialLocation = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
-
+        setupMapView()
+        setupLocationManager()
+        testConsole()
+    }
+    
+    private func setupMapView() {
+        mapView.delegate = self
+        mapView.showsUserLocation = true
+    }
+    
+    private func setupLocationManager() {
         LocationManager.shared.didUpdate = { [weak self] value in
             self?.text.text = value
         }
-
-        testConsole()
+        
+        LocationManager.shared.didUpdateLocation = { [weak self] location in
+            self?.updateMap(with: location)
+        }
+    }
+    
+    private func updateMap(with location: CLLocation) {
+        // Update annotation position
+        locationAnnotation.coordinate = location.coordinate
+        locationAnnotation.title = "Current Location"
+        
+        if !hasInitialLocation {
+            mapView.addAnnotation(locationAnnotation)
+            hasInitialLocation = true
+        }
     }
 
     func testConsole() {
@@ -59,6 +88,28 @@ class ViewController: UIViewController {
 
     @IBAction func createLeak() {
         present(LeakViewController(), animated: true)
+    }
+}
+
+// MARK: - MKMapViewDelegate
+extension ViewController: MKMapViewDelegate {
+    func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+        if annotation is MKUserLocation {
+            return nil
+        }
+        
+        let identifier = "LocationPin"
+        var annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
+        
+        if annotationView == nil {
+            annotationView = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+            annotationView?.canShowCallout = true
+            annotationView?.markerTintColor = .systemBlue
+        } else {
+            annotationView?.annotation = annotation
+        }
+        
+        return annotationView
     }
 }
 
