@@ -10,12 +10,15 @@ import Foundation
 
 final class LocationToolkit {
     static let shared = LocationToolkit()
+    
+    private var routeSimulatedLocation: CLLocation?
     private var routeSimulationTimer: Timer?
+    private let locationUpdateTimeInterval: TimeInterval = 1
     
     var simulatedLocation: CLLocation? {
         get {
             if routeSimulation.isSimulating {
-                return currentRouteLocation
+                return self.routeSimulatedLocation
             }
             
             let latitude = UserDefaults.standard.double(forKey: Constants.simulatedLatitude)
@@ -85,9 +88,14 @@ final class LocationToolkit {
         }
     }
     
-    private var currentRouteLocation: CLLocation?
-    private var currentSegment: (start: CLLocation, end: CLLocation)?
-    private var segmentProgress: Double = 0
+    private var targetRouteLocationIndex: Int = -1
+    private var targetRouteLocation: CLLocation? {
+        if targetRouteLocationIndex >= 0 && targetRouteLocationIndex < routeSimulation.locations.count {
+            return routeSimulation.locations[targetRouteLocationIndex]
+        } else {
+            return nil
+        }
+    }
     
     var indexSaved: Int {
         guard let simulatedLocation else { return -1 }
@@ -190,6 +198,7 @@ final class LocationToolkit {
             )
         )
 
+        // ... (rest of presetLocations remain unchanged)
         return presetLocations
     }()
     
@@ -198,10 +207,11 @@ final class LocationToolkit {
         
         stopRouteSimulation()
         
-        currentRouteLocation = routeSimulation.locations[0]
-        setupNextSegment()
+        routeSimulatedLocation = routeSimulation.locations[0]
+        targetRouteLocationIndex = 1
         
-        routeSimulationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        // Update more frequently for smoother animation
+        routeSimulationTimer = Timer.scheduledTimer(withTimeInterval: locationUpdateTimeInterval, repeats: true) { [weak self] _ in
             self?.updateRouteLocation()
         }
     }
@@ -209,43 +219,35 @@ final class LocationToolkit {
     private func stopRouteSimulation() {
         routeSimulationTimer?.invalidate()
         routeSimulationTimer = nil
-        currentRouteLocation = nil
-        currentSegment = nil
-        segmentProgress = 0
+        targetRouteLocationIndex = -1
     }
-    
-    private func setupNextSegment() {
-        guard routeSimulation.locations.count >= 2 else {
-            stopRouteSimulation()
-            return
-        }
-        
-        let currentIndex = routeSimulation.currentLocationIndex
-        let nextIndex = (currentIndex + 1) % routeSimulation.locations.count
-        
-        currentSegment = (
-            start: routeSimulation.locations[currentIndex],
-            end: routeSimulation.locations[nextIndex]
-        )
-        segmentProgress = 0
-    }
-    
+
     private func updateRouteLocation() {
-        guard let segment = currentSegment else { return }
+        guard let targetRouteLocation else { return }
         
-        let speed = routeSimulation.effectiveSpeed
-        let totalDistance = segment.start.distance(from: segment.end)
-        segmentProgress += speed
+        let speed = routeSimulation.effectiveSpeedMS
         
-        if segmentProgress >= totalDistance {
-            routeSimulation.currentLocationIndex = (routeSimulation.currentLocationIndex + 1) % routeSimulation.locations.count
-            currentRouteLocation = routeSimulation.locations[routeSimulation.currentLocationIndex]
-            setupNextSegment()
+        if let routeSimulatedLocation {
+            let distance = routeSimulatedLocation.distance(from: targetRouteLocation)
+            let stepDistance = speed * locationUpdateTimeInterval
+            if distance < stepDistance {
+                self.routeSimulatedLocation = targetRouteLocation
+                targetRouteLocationIndex += 1
+                
+                if targetRouteLocationIndex >= routeSimulation.locations.count {
+                    stopRouteSimulation()
+                    return
+                }
+                
+                let remainingDistance = stepDistance - distance
+                let course = routeSimulatedLocation.bearing(to: self.targetRouteLocation!)
+                self.routeSimulatedLocation = routeSimulatedLocation.nextLocation(withCourse: course, distance: remainingDistance)
+            } else {
+                let course = routeSimulatedLocation.bearing(to: targetRouteLocation)
+                self.routeSimulatedLocation = routeSimulatedLocation.nextLocation(withCourse: course, distance: stepDistance)
+            }
         } else {
-            let fraction = segmentProgress / totalDistance
-            let newLat = segment.start.coordinate.latitude + (segment.end.coordinate.latitude - segment.start.coordinate.latitude) * fraction
-            let newLon = segment.start.coordinate.longitude + (segment.end.coordinate.longitude - segment.start.coordinate.longitude) * fraction
-            currentRouteLocation = CLLocation(latitude: newLat, longitude: newLon)
+            routeSimulatedLocation = targetRouteLocation
         }
         
         CLLocationManagerTracker.triggerUpdateForAllLocations()
@@ -269,4 +271,49 @@ extension LocationToolkit {
         static let simulatedLatitude = "_simulatedLocationLatitude"
         static let simulatedLongitude = "_simulatedLocationLongitude"
     }
+}
+
+extension CLLocation {
+    func nextLocation(withCourse course: CLLocationDirection, distance: CLLocationDistance) -> CLLocation {
+        let courseRadians = course.degreesToRadians
+        let distRadians = distance / (6372797.6) // earth radius in meters
+        
+        let lat1 = self.coordinate.latitude.degreesToRadians
+        let lon1 = self.coordinate.longitude.degreesToRadians
+        
+        let lat2 = asin(sin(lat1) * cos(distRadians) + cos(lat1) * sin(distRadians) * cos(courseRadians))
+        let lon2 = lon1 + atan2(sin(courseRadians) * sin(distRadians) * cos(lat1), cos(distRadians) - sin(lat1) * sin(lat2))
+        
+        return CLLocation(latitude: lat2.radiansToDegrees, longitude: lon2.radiansToDegrees)
+    }
+    
+    func bearing(to destination: CLLocation) -> CLLocationDirection {
+        let lat1 = self.coordinate.latitude.degreesToRadians
+        let lon1 = self.coordinate.longitude.degreesToRadians
+        
+        let lat2 = destination.coordinate.latitude.degreesToRadians
+        let lon2 = destination.coordinate.longitude.degreesToRadians
+        
+        let dLon = lon2 - lon1
+        
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1)*sin(lat2) - sin(lat1)*cos(lat2)*cos(dLon)
+        
+        var bearing = atan2(y, x)
+        
+        bearing = bearing.radiansToDegrees
+        if bearing < 0 {
+            bearing += 360
+        }
+        
+        return CLLocationDirection(bearing)
+    }
+}
+
+extension CLLocationDegrees {
+    var degreesToRadians: Double { return self * .pi / 180 }
+    var radiansToDegrees: Double { return self * 180 / .pi }
+    var normalizedDegrees: Double { return (self + 360).truncatingRemainder(dividingBy: 360) }
+    var normalizedRadians: Double { (self + (2 * Double.pi))
+        .truncatingRemainder(dividingBy: 2 * Double.pi) }
 }

@@ -33,7 +33,7 @@ struct RouteSimulation {
     var isSimulating: Bool = false
     var currentLocationIndex: Int = 0
     
-    var effectiveSpeed: Double {
+    var effectiveSpeedMS: Double {
         speed == .custom ? customSpeed : speed.metersPerSecond
     }
 }
